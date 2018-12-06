@@ -6,15 +6,14 @@ var authority = require('./authority.js');
 var rlrparser = require('./rlr.js');
 var rlplayer = require('./playerdata.js');
 var merchant = require('./merchant.js');
-let cooldown = new Set();
 const voiceManagedChannel = new Set(['435355490977841163']);
+var matchPlayers = new Array();
+var matchChallenged;
 
 bot.on('ready', () => {
     console.log(`成功登入 ${bot.user.tag}!`);
-});
-
-bot.on('messageReactionAdd', (messageReaction, user) => {
-    console.log(messageReaction.emoji.identifier == '%36%E2%83%A3');
+    bot.user.setStatus('Online');
+    bot.user.setGame('愚蠢的人類');
 });
 
 bot.on('voiceStateUpdate', (oldMember, newMember) => {
@@ -100,7 +99,58 @@ bot.on('message', message => {
     let cont = message.content.slice(prefix.length).split(" ");
     let args = cont.slice(1);
 
+    if (message.author.bot) {
+        return;
+    }
+
+    // Helper functions
+    if (msg.startsWith(`${prefix}HELP`)) {
+        message.channel.send('目前本機器人具有的指令如下列：');
+        var detail = '~account | 列出您的帳號明細，初次使用將創建帳號。\n';
+        detail += '~claim | 領取每日登入獎勵，此功能於每天早上8:00重置。\n';
+        detail += '~garage | 列出您的物品欄，由於排版關係，建議於電腦版使用此功能。\n';
+        detail += '~give <@使用者> <金錢數量> | 給其他人錢！\n';
+        detail += '~sell <物品ID1> <物品ID2> <...> | 賣出指定ID的物品。\n';
+        detail += '~sell all | 賣出所有物品。\n'
+        detail += '~lottery | 抽獎。（此功能目前每次消耗50元）';
+        message.channel.send(detail);
+    }
+
     // Game functions
+    if (msg.startsWith(`${prefix}MATCH`)) {
+        if (!args[0]) {
+            message.channel.send(`格式錯誤。使用方法: **${prefix}match <@使用者>**。`);
+        } else {
+            var challengeTimer;
+            if (args[0].toUpperCase() == 'ACCEPT') {
+                if (matchPlayers.length != 1) {
+                    message.channel.send(`此指令只有在有玩家挑戰你時使用。`);
+                } else {
+                    if (message.author.id != matchChallenged) {
+                        message.channel.send(`此指令只有在有玩家挑戰你時使用。`);
+                    } else {
+                        message.channel.send(message.author.username + `接受了挑戰！遊戲設置中...`);
+                        matchPlayers.push(message.author.id);
+                        clearTimeout(challengeTimer);
+                    }
+                }
+            } else {
+                let mentionedUsers = message.mentions.users;
+                if (mentionedUsers.size != 1) {
+                    message.channel.send(`格式錯誤。使用方法: **${prefix}match <@使用者>**。`);
+                } else {
+                    matchPlayers.push(message.author.id);
+                    matchChallenged = mentionedUsers.first().id;
+                    message.channel.send(`${mentionedUsers.first()}，有人對你發起遊戲邀請，若要接受挑戰，請使用 **${prefix}match accept** 指令。`);
+                    challengeTimer = setTimeout(() => {
+                        message.reply(`對手沒有回應，本次挑戰將被終止。`);
+                        matchPlayers = [];
+                    }, 20000);
+                }
+            }
+        }
+    }
+
     if (msg.startsWith(`${prefix}ACCOUNT`)) {
         merchant.fetchUser(message.author.id + message.guild.id, message.author.username).then((r) => {
             const embed = new Discord.RichEmbed()
@@ -148,17 +198,24 @@ bot.on('message', message => {
     if (msg.startsWith(`${prefix}GARAGE`)) {
         merchant.fetchItem(message.author.id + message.guild.id).then((r) => {
             var formatted = `\`\`\`\n`;
-            let rarityNames = ["Rare", "Very Rare", "Import", "Exotic", "Black Market"];
+            let rarityNames = ["Rare", "Epic", "Exotic", "Mystic", "Legend"];
             let types = ["車體", "輪胎", "氮氣"];
-            formatted += '  ID  |    Item Name    |    Rarity    | Type |   Painted Color   |  Certification\n';
-            formatted += '----------------------------------------------------------------------------------\n';
+            let painted = new Map([["Titanium White", "TW"], ["Grey", "Grey"], ["Black", "Black"], ["Cobalt", "Cobal"], ["Sky Blue", "SB"],
+                          ["Forest Green", "FG"], ["Lime", "Lime"], ["Saffron", "Saffr"], ["Orange", "Orang"], ["Pink", "Pink"],
+                          ["Crimson", "Crims"], ["Purple", "Purpl"], ["Burnt Sienna", "BS"], ["無", " "]]);
+            let certed = new Map([["Striker", "STRK"], ["Sweeper", "SWEP"], ["Tactician", "TACT"], ["Guardian", "GRDN"], ["Scorer", "SCOR"],
+                         ["Victor", "VICT"], ["Playmaker", "PMKR"], ["Goalkeeper", "GLKP"], ["Aviator", "AVIA"], ["Juggler", "JUGL"],
+                         ["Show-off", "SHOW"], ["Sniper", "SNIP"], ["無", " "]]);
+
+            formatted += '  ID  |    Item Name    | Rarity | Type | Color | Cert\n';
+            formatted += '------------------------------------------------------\n';
 
             (function loop(i) {
                 if (i < r.length) {
                     new Promise((resolve, reject) => {
                         setTimeout(() => {
                             merchant.itemInfo(r[i].itemID).then((k) => {
-                                formatted += (rlrparser.format(""+r[i].rowID,6) + '|' + rlrparser.format(k.name,17) + '|' + rlrparser.format(rarityNames[k.rarity-1],14) + '| ' + types[k.type-1] + ' |' + rlrparser.format(r[i].painted.replace('無', ' '),19) + '|' + rlrparser.format(r[i].certed.replace('無', ' '),17) + '\n');
+                                formatted += (rlrparser.format(""+r[i].rowID,6) + '|' + rlrparser.format(k.name,17) + '|' + rlrparser.format(rarityNames[k.rarity-1],8) + '| ' + types[k.type-1] + ' |' + rlrparser.format(painted.get(r[i].painted),7) + '|' + rlrparser.format(certed.get(r[i].certed),6) + '\n');
                                 resolve();
                             }).catch((e) => {
                                 console.log(e);
@@ -216,7 +273,7 @@ bot.on('message', message => {
                     });
                 }
             }).catch((e) => {
-                message.reply('您尚未註冊，請先使用' + prefix + 'account指令註冊。');
+                message.reply(`您尚未註冊，請先使用 **${prefix}account** 指令註冊。`);
             });
         }
     }
@@ -304,7 +361,7 @@ bot.on('message', message => {
                                     }).catch(reject());
                                 }).catch((e) => {
                                     console.log(e);
-                                    message.reply('你好像在sell指令中輸入了無效的物品ID哦...或者你想詐欺本機器人？');
+                                    message.reply('你好像輸入了無效的物品ID哦...或者你想詐欺本機器人？');
                                     reject();
                                 });
                             }, 25);
@@ -320,7 +377,7 @@ bot.on('message', message => {
     if (msg.startsWith(`${prefix}LOTTERY`)) {
         merchant.fetchUser(message.author.id + message.guild.id, message.author.username).then((r) => {
             if (r.balance < 50) {
-                message.reply('您沒有錢了！抽一次獎需要50元。（小提示：記得每天使用' + prefix + 'claim指令賺錢哦！）');
+                message.reply(`您沒有錢了！抽一次獎需要50元。（小提示：記得每天使用 **${prefix}claim** 指令賺錢哦！）`);
             } else {
                 merchant.updateBalance(message.author.id + message.guild.id, -50).then((r) => {
                     merchant.lottery().then((r) => {
@@ -353,17 +410,17 @@ bot.on('message', message => {
                         .addField('類型',types[r.type-1],true)
                         .addField('顏色',paintedStr,true)
                         .addField('認證',certedStr,true)
-                        message.reply('恭喜！以下物品已加入您的物品欄！（使用' + prefix + 'garage指令來查詢所有物品）');
+                        message.reply(`恭喜！以下物品已加入您的物品欄！（使用 **${prefix}garage** 指令來查詢所有物品）`);
                         message.channel.send({embed});
                     }).catch((e) => {
                         console.log(e);
                     });
                 }).catch((e) => {
-                    message.reply('您尚未註冊，請先使用' + prefix + 'account指令註冊。');
+                    message.reply(`您尚未註冊，請先使用 **${prefix}account** 指令註冊。`);
                 });
             }
         }).catch((e) => {
-            message.reply('您尚未註冊，請先使用' + prefix + 'account指令註冊。');
+            message.reply(`您尚未註冊，請先使用 **${prefix}account** 指令註冊。`);
         });
     }
 
