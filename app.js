@@ -6,9 +6,11 @@ var authority = require('./authority.js');
 var rlrparser = require('./rlr.js');
 var rlplayer = require('./playerdata.js');
 var merchant = require('./merchant.js');
-const voiceManagedChannel = new Set(['435355490977841163']);
+const voiceManagedChannel = new Set(['435355490977841163', '520104948411793408']);
 var matchPlayers = new Array();
 var matchChallenged;
+var tradePlayers = new Array();
+var tradeProposed;
 
 bot.on('ready', () => {
     console.log(`成功登入 ${bot.user.tag}!`);
@@ -26,68 +28,60 @@ bot.on('voiceStateUpdate', (oldMember, newMember) => {
             return;
         }
         // 先取得目前所有子頻道的狀況...
-        var channelCounts = [0, 0, 0, 0, 0, 0, 0, 0, 0]; // 人數上限為 X 人的頻道目前開了幾個
-        var channelOccupied = [0, 0, 0, 0, 0, 0, 0, 0, 0]; // 人數上限為 X 人的頻道目前有幾個裡面有人
+        var channelNames = new Set();
+        var channelOccupied = 0;
+
         for (var [k, v] of newUserChannel.parent.children) {
-            if (v.userLimit <= channelCounts.length) {
-                channelCounts[v.userLimit] += 1;
-                channelOccupied[v.userLimit] += v.members.size > 0 ? 1 : 0;
+            let nameArray = v.name.split(" ");
+            if (nameArray.length > 1) {
+                channelNames.add(parseInt(nameArray[1]));
+            } else {
+                channelNames.add(1);
+            }
+
+            if (v.members.size != 0) {
+                channelOccupied += 1;
             }
         }
 
-        // 目前只需要處理人數上限為 2, 3, 4, 6, 8人的頻道...
-        let limits = [2, 3, 4, 6, 8];
-        let titles = ['2v2', '3v3', '2v2 Internal', '3v3 Internal', '4v4 Internal'];
-
-        (function loop(i) {
-            // console.log('運行到第' + i + "個chaining...");
-            if (i < limits.length) {
-                new Promise((resolve, reject) => {
-                    setTimeout(() => {
-                        if (channelCounts[limits[i]] == channelOccupied[limits[i]]) {
-                            newUserChannel.guild.createChannel(titles[i], 'voice').then((c) => {
-                                c.setParent(newUserChannel.parent).then((c) => {
-                                    c.edit({userLimit: limits[i]}).then((c) => {
-                                        console.log('創建新頻道成功：' + titles[i]);
-                                        resolve();
-                                    }).catch();
-                                }).catch();
-                            }).catch();
-                        } else {
-                            console.log('無須更動' + limits[i] + '人頻道的設定...');
-                            resolve();
-                        }
-                    }, 25);
-                }).then(loop.bind(null, i+1)).catch(loop.bind(null, i+1));
-            } else {
-                var count = 0;
-                for (var [k, v] of newUserChannel.parent.children) {
-                    v.edit({position: v.userLimit == 0 ? 99 : v.userLimit * 100 + count}).then().catch();
-                    count += 1;
-                    //console.log('u:' + v.userLimit + ', p:' + v.position);
+        if (channelOccupied >= newUserChannel.parent.children.size) {
+            var pos = 1;
+            while (true) {
+                if (channelNames.has(pos)) {
+                    pos += 1;
+                } else {
+                    break;
                 }
             }
-        })(0);
+
+            newUserChannel.guild.createChannel(`ᴄʜᴀᴛ ${pos}`, 'voice').then((c) => {
+                c.setParent(newUserChannel.parent).then((c) => {
+                    c.edit({userLimit: 0, position: 100 + pos}).then((c) => {
+                        console.log('創建新頻道成功。');
+                    }).catch();
+                }).catch();
+            }).catch();
+        }
+
         // 有人離開頻道
     } else if (newUserChannel === undefined) {
         if (!voiceManagedChannel.has(oldUserChannel.parentID)) {
             return;
         }
         // 同樣先取得目前所有子頻道的狀況...
-        var channelCounts = [0, 0, 0, 0, 0, 0, 0, 0, 0]; // 人數上限為 X 人的頻道目前開了幾個
-        var channelOccupied = [0, 0, 0, 0, 0, 0, 0, 0, 0]; // 人數上限為 X 人的頻道目前有幾個裡面有人
+        var channelOccupied = 0;
         for (var [k, v] of oldUserChannel.parent.children) {
-            if (v.userLimit <= channelCounts.length) {
-                channelCounts[v.userLimit] += 1;
-                channelOccupied[v.userLimit] += v.members.size > 0 ? 1 : 0;
+            if (v.members.size != 0) {
+                channelOccupied += 1;
             }
         }
 
+        var channelNeedToClose = oldUserChannel.parent.children.size - channelOccupied - 1;
         // 保留一個空頻道，其餘的空頻道都刪除
         for (var [k, v] of oldUserChannel.parent.children) {
-            if (v.members.size == 0 && channelCounts[v.userLimit] > channelOccupied[v.userLimit] + 1) {
+            if (v.members.size == 0 && channelNeedToClose > 0) {
                 v.delete('清除空房間...');
-                channelCounts[v.userLimit] -= 1;
+                channelNeedToClose -= 1;
             }
         }
     }
@@ -145,6 +139,54 @@ bot.on('message', message => {
                     challengeTimer = setTimeout(() => {
                         message.reply(`對手沒有回應，本次挑戰將被終止。`);
                         matchPlayers = [];
+                    }, 20000);
+                }
+            }
+        }
+    }
+
+    if (msg.startsWith(`${prefix}TRADE`)) {
+        if (!args[0]) {
+            message.channel.send(`格式錯誤。使用方法: **${prefix}trade <@使用者>**。`);
+        } else {
+            var tradeTimer;
+            if (args[0].toUpperCase() == 'ACCEPT') {
+                if (tradePlayers.length != 1) {
+                    message.channel.send(`此指令只有在有玩家對你發起交易邀請時使用。`);
+                } else {
+                    if (message.author.id != tradeProposed) {
+                        message.channel.send(`此指令只有在有玩家對你發起交易邀請時使用。`);
+                    } else {
+                        message.channel.send(`交易開始，如需幫助，請使用 **${prefix}tradehelp** 指令。`);
+                        tradePlayers.push(message.author.id);
+                        clearTimeout(tradeTimer);
+                    }
+                }
+            } else if (args[0].toUpperCase() == 'REJECT') {
+                if (tradePlayers.length != 1) {
+                    message.channel.send(`此指令只有在有玩家對你發起交易邀請時使用。`);
+                } else {
+                    if (message.author.id != tradeProposed) {
+                        message.channel.send(`此指令只有在有玩家對你發起交易邀請時使用。`);
+                    } else {
+                        message.channel.send(`${message.author.username} 拒絕了交易。`);
+                        clearTimeout(tradeTimer);
+                        tradePlayers = [];
+                    }
+                }
+            } else {
+                let mentionedUsers = message.mentions.users;
+                if (mentionedUsers.size != 1) {
+                    message.channel.send(`格式錯誤。使用方法: **${prefix}trade <@使用者>**。`);
+                } else if (tradePlayers.length == 2) {
+                    message.channel.send(`目前仍有交易在進行中，請稍待片刻。`);
+                } else {
+                    tradePlayers.push(message.author.id);
+                    tradeProposed = mentionedUsers.first().id;
+                    message.channel.send(`${mentionedUsers.first()}，有人對你發起交易邀請，若要接受，請使用 **${prefix}trade accept** 指令。`);
+                    tradeTimer = setTimeout(() => {
+                        message.reply(`對象沒有回應，本次交易將被終止。`);
+                        tradePlayers = [];
                     }, 20000);
                 }
             }
@@ -424,7 +466,9 @@ bot.on('message', message => {
         });
     }
 
-    // ELO functions
+    // ELO functions, disabled ATM.
+    /* MARKER -- ENDING POINT AT 615
+
     if (msg.startsWith(`${prefix}REGISTER`)) {
         authority.check(message.author.id + message.guild.id)
         .then((r) => {
@@ -610,6 +654,7 @@ bot.on('message', message => {
             }
         }
     }
+    MARKER -- STARTING POINT AT 428 */
 });
 
 bot.login(config.token);
